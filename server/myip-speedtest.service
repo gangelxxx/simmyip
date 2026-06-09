@@ -1,0 +1,19 @@
+[Unit]
+Description=MyIP Tray speedtest service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/speedtest/speedtest_server.py
+Restart=on-failure
+RestartSec=3
+
+# Безопасность: сервис ничего не пишет на диск и не нуждается в привилегиях.
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
