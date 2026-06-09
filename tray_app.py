@@ -367,6 +367,13 @@ class TrayApp(QObject):
         self._anim_worker.frame_ready.connect(self._on_anim_frame, Qt.ConnectionType.QueuedConnection)
         self._anim_stopping = False
         self._current_anim_frame = 0
+        # Минимальное время показа спиннера, чтобы при быстром ответе и
+        # закэшированном флаге он не мигал, а был виден плавно.
+        self._anim_min_visible_ms = 700
+        self._anim_start_time = 0.0
+        self._anim_stop_timer = QTimer(self)
+        self._anim_stop_timer.setSingleShot(True)
+        self._anim_stop_timer.timeout.connect(self._do_stop_loading_animation)
 
         self._network = QNetworkAccessManager(self)
         self._current_reply = None
@@ -774,7 +781,7 @@ class TrayApp(QObject):
 
         path = flags_service._cache_path(country_code)
         if os.path.exists(path):
-            pixmap = flags_service.get_flag_pixmap(country_code, size=ICON_SIZE)
+            pixmap = flags_service.get_cached_flag_pixmap(country_code, size=ICON_SIZE)
             self._on_flag_loaded(pixmap, generation)
             return
 
@@ -817,7 +824,10 @@ class TrayApp(QObject):
                         pass
 
         reply.deleteLater()
-        pixmap = flags_service.get_flag_pixmap(country_code, size=ICON_SIZE)
+        # Только из кэша: качать здесь нельзя — это UI-поток, а блокирующий
+        # requests.get на десятки секунд заморозил бы трей. Если асинхронная
+        # загрузка не удалась, просто покажем иконку без флага.
+        pixmap = flags_service.get_cached_flag_pixmap(country_code, size=ICON_SIZE)
         self._on_flag_loaded(pixmap, generation)
 
     def _on_flag_loaded(self, flag_pixmap, generation):
@@ -841,10 +851,27 @@ class TrayApp(QObject):
         self._render_tray_icon()
 
     def _start_loading_animation(self):
+        # Отменяем отложенную остановку предыдущего цикла, иначе её таймер
+        # погасил бы только что запущенную анимацию.
+        self._anim_stop_timer.stop()
         self._anim_stopping = False
+        self._anim_start_time = time.time()
         self._anim_worker.start_animation()
+        # Рисуем первый кадр немедленно: иначе спиннер появляется только после
+        # отложенного frame_ready и при быстром ответе может не успеть мелькнуть.
+        self._render_tray_icon()
 
     def _stop_loading_animation(self):
+        # Держим спиннер минимум _anim_min_visible_ms, чтобы он не мигал при
+        # мгновенном ответе. Если время уже вышло — гасим сразу.
+        elapsed_ms = (time.time() - self._anim_start_time) * 1000
+        remaining_ms = self._anim_min_visible_ms - elapsed_ms
+        if remaining_ms > 0:
+            self._anim_stop_timer.start(int(remaining_ms))
+        else:
+            self._do_stop_loading_animation()
+
+    def _do_stop_loading_animation(self):
         self._anim_stopping = True
         self._anim_worker.stop_animation()
         self._render_tray_icon()
@@ -896,7 +923,7 @@ class TrayApp(QObject):
         self.timer.setInterval(self.settings["check_interval_ms"])
         flag_pixmap = QPixmap()
         if self.settings.get("show_flag_icon", True) and not self.last_error:
-            flag_pixmap = flags_service.get_flag_pixmap(self.current_country_code, size=ICON_SIZE)
+            flag_pixmap = flags_service.get_cached_flag_pixmap(self.current_country_code, size=ICON_SIZE)
         self._current_flag_pixmap = flag_pixmap
         self._current_base_icon = create_icon(
             flag_pixmap=flag_pixmap,
@@ -908,6 +935,7 @@ class TrayApp(QObject):
         self._abort_current_request()
         self._abort_flag_request()
         self._abort_speed_test()
+        self._anim_stop_timer.stop()
         self._anim_worker.requestInterruption()
         self._anim_worker.stop_animation()
         self._anim_worker.wait(1000)

@@ -17,7 +17,9 @@ def _data_dir():
 HISTORY_FILE = os.path.join(_data_dir(), "ip_history.json")
 MAX_AGE_DAYS = 7
 
-_lock = threading.Lock()
+# Реентрантный замок: add_record() держит его и внутри вызывает load_history(),
+# которая берёт замок повторно. С обычным Lock это был бы дедлок.
+_lock = threading.RLock()
 
 
 def _now():

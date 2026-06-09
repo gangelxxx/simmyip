@@ -21,10 +21,38 @@ def _cache_path(code):
     return os.path.join(FLAGS_CACHE_DIR, f"{code.lower()}.png")
 
 
+def _load_scaled(path, size):
+    pixmap = QPixmap(path)
+    if pixmap.isNull():
+        return QPixmap()
+
+    return pixmap.scaled(
+        size, size,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
+def get_cached_flag_pixmap(country_code, size=64):
+    """Возвращает флаг ТОЛЬКО из локального кэша, без сетевых запросов.
+    Никогда не блокирует — безопасно вызывать из UI-потока."""
+    if not country_code or len(country_code) != 2:
+        return QPixmap()
+
+    path = _cache_path(country_code)
+    if not os.path.exists(path):
+        return QPixmap()
+
+    return _load_scaled(path, size)
+
+
 def get_flag_pixmap(country_code, size=64):
     """
     Возвращает QPixmap с флагом страны.
     Сначала ищет в локальном кэше, если нет — скачивает с flagcdn.com.
+
+    ВНИМАНИЕ: при отсутствии файла делает блокирующий requests.get (до 10 с) —
+    НЕ вызывать из UI-потока. Для трея используйте get_cached_flag_pixmap.
     """
     if not country_code or len(country_code) != 2:
         return QPixmap()
@@ -42,12 +70,4 @@ def get_flag_pixmap(country_code, size=64):
         except Exception:
             return QPixmap()
 
-    pixmap = QPixmap(path)
-    if pixmap.isNull():
-        return QPixmap()
-
-    return pixmap.scaled(
-        size, size,
-        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-        Qt.TransformationMode.SmoothTransformation,
-    )
+    return _load_scaled(path, size)
